@@ -1,5 +1,6 @@
 ---
 title: "Colorado Critical Wetlands of the Front Range Urban Corridor"
+author: "By Luke Knaggs"
 output:
   html_document:
     toc: true
@@ -17,10 +18,8 @@ output:
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
                       fig.width = 8, fig.height = 5, dpi = 300)
 
-# Load library
 library(tidyverse)
 library(flextable)
-library(sf)
 library(here)
 library(kableExtra)
 
@@ -38,13 +37,10 @@ species   <- all_data$species
 water     <- all_data$water
 soil      <- all_data$soil
 
-# Create a df to relate with datasheets
-# Meta: site_name, project, wetland_type from site_info 
+# Join metadata 
 meta <- site_info |>
   select(TIA_ID, site_name, project, wetland_type)
 
-# Drop site_name from datasets that already have it to avoid .x/.y conflicts
-### remove site names
 eco_j     <- eco     |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
 social_j  <- social  |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
 species_j <- species |> left_join(meta, by = "TIA_ID")
@@ -64,27 +60,26 @@ fqa_summary <- species_j |>
   ungroup() |>
   left_join(meta, by = "TIA_ID")
 
-# Noxious species count per site ────────────────────────────────────────────
+# Noxious species count per site 
 nox_count <- species_j |>
   filter(!is.na(noxious_status), noxious_status != "") |>
   count(TIA_ID, name = "noxious_count") |>
   left_join(meta, by = "TIA_ID")
 
-# Force numeric EIA columns ─────────────────────────────────────────────────
+# Change to numeric EIA columns 
 eco_j <- eco_j |>
   mutate(across(c(landscape_context_score, condition_score,
                   l1_contiguous_natural_land_cover, l2_land_use_index,
                   h1_water_source, h2_hydroperiod, h3_hydrologic_connectivity,
                   s1_soil_condition, s2_surface_water_turbidity, s3_algal_growth,
                   v1_native_cover, v2_invasive_cover),
-                ~ suppressWarnings(as.numeric(as.character(.)))))
+                as.numeric))
 
-# ── Shared flextable style ─────────────────────────────────────────────────────
+# Create Shared styles & themes 
 style_ft <- function(ft) {
   ft |> theme_booktabs() |> bold(part = "header") |> autofit()
 }
 
-# ── Plotting theme ─────────────────────────────────────────────────────────────
 theme_wetland <- function() {
   theme_minimal(base_size = 11) +
     theme(
@@ -97,7 +92,7 @@ theme_wetland <- function() {
 
 project_colours <- c("SNHS" = "#2166ac", "FRVW" = "#d6604d")
 
-# ── Reusable box plot functions ────────────────────────────────────────────────
+# Template reusable box plots  
 boxplot_by_project <- function(data, y_col, title, y_label = y_col) {
   ggplot(data, aes(x = project, y = .data[[y_col]], fill = project)) +
     geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8) +
@@ -117,6 +112,7 @@ boxplot_by_wetland <- function(data, y_col, title, y_label = y_col) {
     theme(axis.text.x = element_text(angle = 30, hjust = 1))
 }
 ```
+
 
 # Introduction
 

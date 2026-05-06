@@ -1,4 +1,5 @@
 # load_data.R setup script
+# required to run final report.Rmd
 
 # Install and load required packages
 packageLoad <- function(x) {

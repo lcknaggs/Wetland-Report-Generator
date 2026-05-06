@@ -1,5 +1,11 @@
-# calculate_fqa.R
-# Floristic Quality Assessment calculations
+# calculate_fqa.R script
+# C-values have not been updated since 2020
+# This function uses more updated c-value added to the species list to calculated8 the fqi
+# c-values were added using an internal list that has yet to be published
+# When c-value list is published the fqacalc package can be used for to calculate fqi 
+
+
+
 library(tidyverse)
 
 calculate_fqa <- function(species_df) {

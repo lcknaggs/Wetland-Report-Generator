@@ -1,6 +1,5 @@
 ---
-title: "Colorado Critical Wetlands of the Front Range Urban Corridor"
-author: "By Luke Knaggs"
+title: "Colorado Critical Wetlands of the Front Range Urban Corridor By Luke Knaggs"
 output:
   html_document:
     toc: true

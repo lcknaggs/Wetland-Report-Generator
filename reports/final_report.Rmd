@@ -1,0 +1,768 @@
+---
+title: "Colorado Critical Wetlands of the Front Range Urban Corridor"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+  word_document:
+    toc: true
+    toc_depth: '3'
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 5, dpi = 300)
+
+# Load library
+library(tidyverse)
+library(flextable)
+library(sf)
+library(here)
+library(kableExtra)
+
+source(here("R", "load_data.R"))
+source(here("R", "calculate_fqa.R"))
+
+# Load data 
+all_data    <- load_all_sites(here("data"))
+maps_folder <- here("maps")
+
+site_info <- all_data$site_info
+eco       <- all_data$eco
+social    <- all_data$social
+species   <- all_data$species
+water     <- all_data$water
+soil      <- all_data$soil
+
+# Create a df to relate with datasheets
+# Meta: site_name, project, wetland_type from site_info 
+meta <- site_info |>
+  select(TIA_ID, site_name, project, wetland_type)
+
+# Drop site_name from datasets that already have it to avoid .x/.y conflicts
+### remove site names
+eco_j     <- eco     |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
+social_j  <- social  |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
+species_j <- species |> left_join(meta, by = "TIA_ID")
+water_j   <- water   |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
+soil_j    <- soil    |> select(-any_of("site_name")) |> left_join(meta, by = "TIA_ID")
+
+# FQA summary per site 
+fqa_summary <- species_j |>
+  group_by(TIA_ID) |>
+  group_modify(~ {
+    f <- calculate_fqa(.x)
+    tibble(fqi           = f$fqi,
+           native_fqi    = f$native_fqi,
+           mean_c        = f$mean_c,
+           native_mean_c = f$native_mean_c)
+  }) |>
+  ungroup() |>
+  left_join(meta, by = "TIA_ID")
+
+# Noxious species count per site ────────────────────────────────────────────
+nox_count <- species_j |>
+  filter(!is.na(noxious_status), noxious_status != "") |>
+  count(TIA_ID, name = "noxious_count") |>
+  left_join(meta, by = "TIA_ID")
+
+# Force numeric EIA columns ─────────────────────────────────────────────────
+eco_j <- eco_j |>
+  mutate(across(c(landscape_context_score, condition_score,
+                  l1_contiguous_natural_land_cover, l2_land_use_index,
+                  h1_water_source, h2_hydroperiod, h3_hydrologic_connectivity,
+                  s1_soil_condition, s2_surface_water_turbidity, s3_algal_growth,
+                  v1_native_cover, v2_invasive_cover),
+                ~ suppressWarnings(as.numeric(as.character(.)))))
+
+# ── Shared flextable style ─────────────────────────────────────────────────────
+style_ft <- function(ft) {
+  ft |> theme_booktabs() |> bold(part = "header") |> autofit()
+}
+
+# ── Plotting theme ─────────────────────────────────────────────────────────────
+theme_wetland <- function() {
+  theme_minimal(base_size = 11) +
+    theme(
+      plot.title      = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle   = element_text(hjust = 0.5, colour = "grey40"),
+      strip.text      = element_text(face = "bold"),
+      legend.position = "bottom"
+    )
+}
+
+project_colours <- c("SNHS" = "#2166ac", "FRVW" = "#d6604d")
+
+# ── Reusable box plot functions ────────────────────────────────────────────────
+boxplot_by_project <- function(data, y_col, title, y_label = y_col) {
+  ggplot(data, aes(x = project, y = .data[[y_col]], fill = project)) +
+    geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8) +
+    geom_jitter(width = 0.15, alpha = 0.4, size = 2) +
+    scale_fill_manual(values = project_colours, name = "Project") +
+    labs(title = title, x = NULL, y = y_label) +
+    theme_wetland()
+}
+
+boxplot_by_wetland <- function(data, y_col, title, y_label = y_col) {
+  ggplot(data, aes(x = wetland_type, y = .data[[y_col]], fill = project)) +
+    geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8,
+                 position = position_dodge(0.75)) +
+    scale_fill_manual(values = project_colours, name = "Project") +
+    labs(title = title, x = NULL, y = y_label) +
+    theme_wetland() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+}
+```
+
+# Introduction
+
+This report presents wetland Ecological Integrity Assessment (EIA) data collected in 2025 across sites surveyed under two projects:
+
+-   **SNHS** - The Statewide Natural Heritage Surveys focused on undisturbed wetland habitat in remote pockets of the Front Range. 
+-   **FRVW** - The Front Range Vulnerable Wetlands Project surveys focused on wetlands at risk of habitat destruction. 
+
+The Colorado Wetland Ecological Integrity Assessment (EIA) aims to assess the degree to which a wetland system matches reference characteristics of similar systems of highest quality. The EIA manual measures the alteration of the landscape, vegetation, hydrology, and soil. In addition to the EIA protocol, a social value survey was developed and conducted to understand the positive impact these wetland systems have on their communities. 
+
+Reference the full protocol for further detail on the Colorado Ecological Integrity Assessment: https://www.cnhp.colostate.edu/download/documents/2016/2016_Colorado_EIA_Field_Manual_Version_2.1.pdf
+
+
+# General Wetland Types Surveyed in 2025
+
+The project was funded on two separate grants, the State Wide Natural Heritage Survey, and the Front Range Vulnerable Wetlands project. Both projects contributed to improving the understanding of wetlands in the Colorado Front Range Urban Corridor. Wet and saline meadows made up the majority of the State Wide Natural Heritage Survey sites. These systems were located in small undeveloped pockets in the front range however there were few remaining wet meadows in more developed areas. The Front Range Vulnerable Wetlands sites located in the development front were primarily riparian forests, shrublands, and cattail marshes. These systems appear more tolerant to disturbance and hydrological alteration.
+
+
+```{r wetland_summary_table}
+eco_j |>
+  mutate(condition_score = suppressWarnings(as.numeric(condition_score))) |>
+  group_by(wetland_type, project) |>
+  summarise(mean_eia = round(mean(condition_score, na.rm = TRUE), 2),
+            n        = n(),
+            .groups  = "drop") |>
+  pivot_wider(names_from  = project,
+              values_from = c(mean_eia, n),
+              names_glue  = "{project}_{.value}") |>
+  rename(`Wetland Type`  = wetland_type,
+         `SNHS Mean EIA` = SNHS_mean_eia,
+         `SNHS (n)`        = SNHS_n,
+         `FRVW Mean EIA` = FRVW_mean_eia,
+         `FRVW (n)`        = FRVW_n) |>
+  flextable() |>
+  style_ft() |>
+  colformat_double(j = c("SNHS Mean EIA", "FRVW Mean EIA"), digits = 2)
+```
+
+
+------------------------------------------------------------------------
+```{r overview_map, fig.width=10, fig.height=8}
+overview_path <- normalizePath(
+  file.path(maps_folder, "Front_Range_Overview_Map.jpg"),
+  mustWork = FALSE
+)
+if (file.exists(overview_path)) {
+  knitr::include_graphics(overview_path)
+} else {
+  cat("Overview map not found.")
+}
+```
+
+
+
+------------------------------------------------------------------------
+
+# Ecological Integrity Assessment Scores 
+
+The Ecological Integrity Assessment scores measures alteration of the landscape, vegetation, hydrology, and soil to assess the degree to which a wetland system matches a high quality reference wetland system of the same type. 
+
+The Front Range Vulnerable Wetland sites averaged over a point lower than the State Wide Natural Heritage Survey sites on the Ecological Integrity Scores. These wetlands were frequently located on the development front and had minimal natural land buffers surrounding them. The State Wide Natural Heritage Survey sites however were often located in remote pockets of the front range urban corridor surrounded by working ranches or public land. The consistent higher quality of the State Wide Natural Heritage Survey sites suggest potential for these sites to be reference, high quality, sites for the front range urban corridor. 
+
+Ecological Integrity Assessment metrics are ranked from 1-5 based on there deviation from reference.
+
+A Scores 4.5-5 Excellent -Reference Condition with no or minimal human impact and fragmentation
+B Scores 3.5-4.4 Good -Slight deviation from reference with minimal impact and fragmented
+C Scores 2.5-3.4 Fair -Moderate deviation from reference with moderate impact and fragmented
+D Scores 0-2.4 Poor -Significant deviation from reference severely impacted and fragmented 
+
+
+
+```{r eia_by_project}
+boxplot_by_project(eco_j, "condition_score",
+                   "",
+                   "Condition Score")
+```
+
+------------------------------------------------------------------------
+
+
+
+------------------------------------------------------------------------
+
+# Landscape Metrics
+
+Landscape metrics evaluate the condition of the landscape surrounding the wetland assessment area (AA). Disturbance within the surrounding landscape buffering the wetland can have a significant impact on wetland processes. The landscape context score is composed of two measurements:
+
+1). Landscape connectivity, this is measured using two metrics, contiguous natural cover and land use index. 
+2). Landscape buffer, this is measured using the extent, width, and condition of the natural buffer surrounding the wetland system. 
+
+## Total Landscape Context Score
+
+```{r landscape_context_project}
+boxplot_by_project(eco_j, "landscape_context_score",
+                   "",
+                   "Landscape Context Score")
+```
+
+## Total Landscape Context Score 
+
+```{r landscape_context_wetland}
+boxplot_by_wetland(eco_j, "landscape_context_score",
+                   "",
+                   "Landscape Context Score")
+```
+
+## Contiguous Natural Cover
+
+```{r contiguous_cover}
+boxplot_by_wetland(eco_j, "l1_contiguous_natural_land_cover",
+                   "",
+                   "Score")
+```
+
+## Land Use Index 
+
+```{r land_use_index}
+boxplot_by_wetland(eco_j, "l2_land_use_index",
+                   "",
+                   "Score")
+```
+## Landscape Buffer
+```{r landscape_buffer}
+boxplot_by_wetland(eco_j, "buffer_total",
+                   "",
+                   "Score")
+```
+
+
+------------------------------------------------------------------------
+
+# Hydrological Metrics
+
+Hydrology is the key driver of wetland systems and defining attribute of wetlands. The Ecological Integrity Assessment measures the condition of the wetland's hydrology using three interconnected metrics: water sources, hydroperiod, and hydrological connectivity. In addition to these metrics water pH, conductivity, and temperature were collected where water was present. 
+
+
+## Water Quality 
+
+```{r water_quality_project, fig.width=9}
+water_j |>
+  mutate(across(c(conductivity_us_cm, temperature_c), as.numeric)) |>
+  pivot_longer(c(conductivity_us_cm, temperature_c),
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = recode(metric,
+    conductivity_us_cm = "Conductivity (\u03bcS/cm)",
+    temperature_c      = "Temperature (\u00b0C)"
+  )) |>
+  ggplot(aes(x = project, y = value, fill = project)) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.4, size = 2) +
+  facet_wrap(~ metric, scales = "free_y") +
+  scale_fill_manual(values = project_colours, name = "Project") +
+  labs(title = "", x = NULL, y = NULL) +
+  theme_wetland()
+```
+
+
+## Water Quality
+
+```{r water_quality_wetland, fig.width=10}
+water_j |>
+  mutate(across(c(conductivity_us_cm, temperature_c), as.numeric)) |>
+  pivot_longer(c(conductivity_us_cm, temperature_c),
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = recode(metric,
+    conductivity_us_cm = "Conductivity (\u03bcS/cm)",
+    temperature_c      = "Temperature (\u00b0C)"
+  )) |>
+  ggplot(aes(x = wetland_type, y = value, fill = project)) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8,
+               position = position_dodge(0.75)) +
+  facet_wrap(~ metric, scales = "free_y") +
+  scale_fill_manual(values = project_colours, name = "Project") +
+  labs(title = "",
+       x = NULL, y = NULL) +
+  theme_wetland() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## Hydrological Connectivity
+
+```{r hydro_connectivity}
+boxplot_by_wetland(eco_j, "h3_hydrologic_connectivity",
+                   "",
+                   "Score")
+```
+
+## Hydroperiod
+
+```{r hydroperiod}
+boxplot_by_wetland(eco_j, "h2_hydroperiod",
+                   "",
+                   "Score")
+```
+
+## Water Source
+
+```{r water_source_plot}
+boxplot_by_wetland(eco_j, "h1_water_source",
+                   "",
+                   "Score")
+```
+
+------------------------------------------------------------------------
+
+## Ecological Integrity Assessment Score
+
+```{r overall_eia}
+boxplot_by_wetland(eco_j, "condition_score",
+                   "",
+                   "Condition Score")
+```
+
+------------------------------------------------------------------------
+
+# Vegetation Metrics
+
+The vegetation assessment was based on a floristic quality assessment conducted for each wetlands site. This assessment evaluates an areas ecological integrity based on its plant species composition. This methods is build on the concept of species conservatism (c-value),  each plant species is assigned a c-value ranging from 0-10 based on the species' tolerance to disturbance. Lower ranked species (0-3) are more tolerant of disturbance and considered generalist. Higher ranked species (7-10) are restricted to areas with little disturbance and considered specialist. The floristic quality index is calculated by multiplying the mean C by the square root of the number of species observed at the site. Generally, 1–19 is low quality, 20–35 is high quality, and above 35 is exceptional.
+
+The Floristic quality index for both projects was especially for the Front Range Vulnerable wetlands. This appears to be due to the high amount of introduced species which have a zero c-value. When excluding introduced species the sites for both projects had a median well within the high quality FQI range. The State Wide Natural Heritage Survey has a consistently higher Floristic quality index score and a lower count of noxious species count. The exception to this is in the riparian forests sites were the noxious species count was higher at the SNHS site. This is might be due to increased frequency of disturbance events in riparian habitats. There was only one SNHS riparian forest site and more data is needed to resolve this anomaly. 
+
+## Floristic Quality Assessment
+
+```{r fqi_project}
+fqa_summary |>
+  pivot_longer(c(fqi, native_fqi), names_to = "metric", values_to = "value") |>
+  mutate(metric = recode(metric,
+    fqi        = "FQI (All Species)",
+    native_fqi = "Native FQI"
+  )) |>
+  ggplot(aes(x = project, y = value, fill = project)) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.4, size = 2) +
+  facet_wrap(~ metric) +
+  scale_fill_manual(values = project_colours, name = "Project") +
+  labs(title = "", x = NULL, y = "FQI") +
+  theme_wetland()
+```
+
+## Floristic Quality Index 
+
+```{r fqi_wetland}
+fqa_summary |>
+  pivot_longer(c(fqi, native_fqi), names_to = "metric", values_to = "value") |>
+  mutate(metric = recode(metric,
+    fqi        = "FQI (All Species)",
+    native_fqi = "Native FQI"
+  )) |>
+  ggplot(aes(x = wetland_type, y = value, fill = project)) +
+  geom_boxplot(outlier.shape = 21, alpha = 0.8,
+               position = position_dodge(0.75)) +
+  facet_wrap(~ metric) +
+  scale_fill_manual(values = project_colours, name = "Project") +
+  labs(title = "",
+       x = NULL, y = "FQI") +
+  theme_wetland() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## Noxious Species 
+
+```{r noxious_count_plot}
+meta |>
+  left_join(nox_count |> select(TIA_ID, noxious_count), by = "TIA_ID") |>
+  mutate(noxious_count = replace_na(noxious_count, 0L)) |>
+  ggplot(aes(x = wetland_type, y = noxious_count, fill = project)) +
+  geom_boxplot(outlier.shape = 21, alpha = 0.8,
+               position = position_dodge(0.75)) +
+  geom_jitter(aes(colour = project),
+              position = position_jitterdodge(dodge.width = 0.75,
+                                              jitter.width = 0.1),
+              alpha = 0.5, size = 2) +
+  scale_fill_manual(values   = project_colours, name = "Project") +
+  scale_colour_manual(values = project_colours, name = "Project") +
+  labs(title = "",
+       x = NULL, y = "Number of Noxious Species") +
+  theme_wetland() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+# Social Values Metrics
+
+A social value survey was developed and conducted to understand the positive impact these wetland systems have on their communities. As predicted social value increased in more densely populated areas. Marshes and riparian forests scored the highest social values likely due to the frequency of trails located near rivers and cattail marshes in the front range. 
+
+Social values are composed of twelve metrics which counted the presence of certain public infrastructure amenities and classified the metric from 0-2 for a total of 24 points. 
+
+2.0: 4+ Social Amenity observed
+1.5: 3  Social Amenity observed
+1.0: 2  Social Amenity observed
+0.5: 1  Social Amenity observed
+0.0: 0  Social Amenity observed
+
+# Social Values
+
+```{r social_by_project}
+social_j |>
+  mutate(total = suppressWarnings(as.numeric(total))) |>
+  boxplot_by_project("total",
+                     "",
+                     "Total Social Value Score")
+```
+
+
+## Social Values
+
+```{r social_wetland}
+social_j |>
+  mutate(total = suppressWarnings(as.numeric(total))) |>
+  boxplot_by_wetland("total",
+                     "",
+                     "Total Social Value Score")
+```
+
+------------------------------------------------------------------------
+
+# Appendices
+
+## Appendix A: Wetland Site Summary Data
+
+### SNHS Sites
+
+```{r appendix_snhs}
+site_info |>
+  filter(project == "SNHS") |>
+  select(TIA_ID, site_name, wetland_type) |>
+  left_join(select(eco, TIA_ID, overall_eia_score), by = "TIA_ID") |>
+  left_join(select(fqa_summary, TIA_ID, fqi, native_fqi), by = "TIA_ID") |>
+  rename(`TIA ID`       = TIA_ID,
+         `Site Name`    = site_name,
+         `Wetland Type` = wetland_type,
+         `Overall EIA`  = overall_eia_score,
+         `FQI`          = fqi,
+         `Native FQI`   = native_fqi) |>
+  flextable() |>
+  style_ft()
+```
+
+### FRVW Sites
+
+```{r appendix_frvw}
+site_info |>
+  filter(project == "FRVW") |>
+  select(TIA_ID, site_name, wetland_type) |>
+  left_join(select(eco, TIA_ID, overall_eia_score), by = "TIA_ID") |>
+  left_join(select(fqa_summary, TIA_ID, fqi, native_fqi), by = "TIA_ID") |>
+  rename(`TIA ID`       = TIA_ID,
+         `Site Name`    = site_name,
+         `Wetland Type` = wetland_type,
+         `Overall EIA`  = overall_eia_score,
+         `FQI`          = fqi,
+         `Native FQI`   = native_fqi) |>
+  flextable() |>
+  style_ft()
+```
+
+------------------------------------------------------------------------
+
+## Appendix B: Ecological Integrity Assessment Data
+
+### SNHS Sites
+
+```{r appendix_eco_snhs}
+eco_j |>
+  filter(project == "SNHS") |>
+  select(TIA_ID, site_name, wetland_type,
+         landscape_total, buffer_total, vegetation_total,
+         hydrology_total, soil_total, size_total, overall_eia_score) |>
+  rename(`TIA ID`       = TIA_ID,
+         `Site Name`    = site_name,
+         `Wetland Type` = wetland_type,
+         `Landscape`    = landscape_total,
+         `Buffer`       = buffer_total,
+         `Vegetation`   = vegetation_total,
+         `Hydrology`    = hydrology_total,
+         `Soil`         = soil_total,
+         `Size`         = size_total,
+         `Overall EIA`  = overall_eia_score) |>
+  flextable() |>
+  style_ft() |>
+  fontsize(size = 8, part = "all")
+```
+
+### FRVW Sites
+
+```{r appendix_eco_frvw}
+eco_j |>
+  filter(project == "FRVW") |>
+  select(TIA_ID, site_name, wetland_type,
+         landscape_total, buffer_total, vegetation_total,
+         hydrology_total, soil_total, size_total, overall_eia_score) |>
+  rename(`TIA ID`       = TIA_ID,
+         `Site Name`    = site_name,
+         `Wetland Type` = wetland_type,
+         `Landscape`    = landscape_total,
+         `Buffer`       = buffer_total,
+         `Vegetation`   = vegetation_total,
+         `Hydrology`    = hydrology_total,
+         `Soil`         = soil_total,
+         `Size`         = size_total,
+         `Overall EIA`  = overall_eia_score) |>
+  flextable() |>
+  style_ft() |>
+  fontsize(size = 8, part = "all")
+```
+
+------------------------------------------------------------------------
+
+## Appendix C: Social Values Data
+
+### SNHS Sites
+
+```{r appendix_social_snhs}
+social_j |>
+  filter(project == "SNHS") |>
+  select(TIA_ID, site_name, wetland_type,
+         public_accessibility, ada_accessibility, recreation, education,
+         social_cohesion, sound_scape, sense_of_place, wetland_size,
+         mean_impervious_surface, population_density,
+         undersurveyed_area, environmental_justice_area, total) |>
+  rename(`TIA ID`          = TIA_ID,
+         `Site Name`       = site_name,
+         `Wetland Type`    = wetland_type,
+         `Public Access`   = public_accessibility,
+         `ADA`             = ada_accessibility,
+         `Recreation`      = recreation,
+         `Education`       = education,
+         `Social Cohesion` = social_cohesion,
+         `Sound Scape`     = sound_scape,
+         `Sense of Place`  = sense_of_place,
+         `Wetland Size`    = wetland_size,
+         `Mean IS`         = mean_impervious_surface,
+         `Pop. Density`    = population_density,
+         `Undersurveyed`   = undersurveyed_area,
+         `Env. Justice`    = environmental_justice_area,
+         `Total`           = total) |>
+  flextable() |>
+  style_ft() |>
+  fontsize(size = 7, part = "all")
+```
+
+### FRVW Sites
+
+```{r appendix_social_frvw}
+social_j |>
+  filter(project == "FRVW") |>
+  select(TIA_ID, site_name, wetland_type,
+         public_accessibility, ada_accessibility, recreation, education,
+         social_cohesion, sound_scape, sense_of_place, wetland_size,
+         mean_impervious_surface, population_density,
+         undersurveyed_area, environmental_justice_area, total) |>
+  rename(`TIA ID`          = TIA_ID,
+         `Site Name`       = site_name,
+         `Wetland Type`    = wetland_type,
+         `Public Access`   = public_accessibility,
+         `ADA`             = ada_accessibility,
+         `Recreation`      = recreation,
+         `Education`       = education,
+         `Social Cohesion` = social_cohesion,
+         `Sound Scape`     = sound_scape,
+         `Sense of Place`  = sense_of_place,
+         `Wetland Size`    = wetland_size,
+         `Mean IS`         = mean_impervious_surface,
+         `Pop. Density`    = population_density,
+         `Undersurveyed`   = undersurveyed_area,
+         `Env. Justice`    = environmental_justice_area,
+         `Total`           = total) |>
+  flextable() |>
+  style_ft() |>
+  fontsize(size = 7, part = "all")
+```
+
+------------------------------------------------------------------------
+
+## Appendix D: Floristic Quality Index Summary
+
+```{r appendix_fqa}
+fqa_summary |>
+  select(TIA_ID, site_name, project, wetland_type,
+         fqi, native_fqi, mean_c, native_mean_c) |>
+  rename(`TIA ID`        = TIA_ID,
+         `Site Name`     = site_name,
+         `Project`       = project,
+         `Wetland Type`  = wetland_type,
+         `FQI`           = fqi,
+         `Native FQI`    = native_fqi,
+         `Mean C`        = mean_c,
+         `Native Mean C` = native_mean_c) |>
+  flextable() |>
+  style_ft() |>
+  colformat_double(j = c("FQI", "Native FQI", "Mean C", "Native Mean C"),
+                   digits = 2)
+```
+
+------------------------------------------------------------------------
+
+## Appendix E: Water Quality Data
+
+```{r appendix_water}
+if (nrow(water_j) > 0) {
+  water_j |>
+    select(TIA_ID, site_name,
+           any_of(c("collection_number", "location_description",
+                    "conductivity_us_cm", "temperature_c",
+                    "ph", "water_depth_cm"))) |>
+    rename(`TIA ID`    = TIA_ID,
+           `Site Name` = site_name) |>
+    rename_with(~ recode(.x,
+      collection_number    = "Collection #",
+      location_description = "Location",
+      conductivity_us_cm   = "Conductivity (\u03bcS/cm)",
+      temperature_c        = "Temp (\u00b0C)",
+      ph                   = "pH",
+      water_depth_cm       = "Depth (cm)"
+    )) |>
+    flextable() |>
+    style_ft() |>
+    fontsize(size = 8, part = "all") |>
+    colformat_num(na_str = "\u2014")
+} else {
+  cat("No water quality data available.")
+}
+```
+
+------------------------------------------------------------------------
+
+## Appendix F: Soil Data
+
+```{r appendix_soil}
+if (nrow(soil_j) > 0) {
+  soil_j |>
+    select(TIA_ID, site_name, water_source, hydric_soil_indicator) |>
+    distinct() |>
+    rename(`TIA ID`           = TIA_ID,
+           `Site Name`        = site_name,
+           `Water Source`     = water_source,
+           `Hydric Indicator` = hydric_soil_indicator) |>
+    mutate(across(everything(),
+                  ~ if_else(is.na(.) | as.character(.) == "", "\u2014",
+                            as.character(.)))) |>
+    flextable() |>
+    style_ft()
+} else {
+  cat("No soil data available.")
+}
+```
+
+------------------------------------------------------------------------
+
+## Appendix G: Most Frequently Observed Species
+
+```{r appendix_common_species, results='asis'}
+common_sp <- species_j |>
+  left_join(select(eco, TIA_ID, overall_eia_score), by = "TIA_ID") |>
+  mutate(
+    overall_eia_score = suppressWarnings(as.numeric(as.character(overall_eia_score))),
+    score_group = case_when(
+  
+      overall_eia_score >= 1 & overall_eia_score < 3 ~ "C",
+      overall_eia_score >= 3 & overall_eia_score < 4 ~ "B",
+      overall_eia_score >= 4 & overall_eia_score <= 5 ~ "A",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(score_group), !is.na(wetland_type))
+
+for (grp in c("C", "B", "A")) {
+  cat("\n\n### EIA Score Group", grp, "\n\n")
+
+  for (wt in sort(unique(common_sp$wetland_type[common_sp$score_group == grp]))) {
+    cat("\n**", wt, "**\n\n", sep = "")
+
+    tbl <- common_sp |>
+      filter(score_group == grp, wetland_type == wt) |>
+      group_by(scientific_name) |>
+      summarise(
+        mean_cover = round(mean(absolute_cover, na.rm = TRUE), 1),
+        n_sites    = n_distinct(TIA_ID),
+        native     = first(native_status),
+        .groups    = "drop"
+      ) |>
+      arrange(desc(mean_cover)) |>
+      slice_head(n = 10) |>
+      rename(`Scientific Name` = scientific_name,
+             `Mean Cover (%)`  = mean_cover,
+             `# Sites`         = n_sites,
+             `Native Status`   = native)
+
+    if (nrow(tbl) > 0) {
+     print(knitr::kable(tbl))
+      cat("\n\n")
+    }
+  }
+}
+```
+
+
+------------------------------------------------------------------------
+
+## Appendix H: Noxious Species by Wetland Type
+
+```{r appendix_noxious, results='asis'}
+nox_all <- species_j |>
+  filter(!is.na(noxious_status), noxious_status != "") |>
+  select(wetland_type, project, scientific_name, noxious_status) |>
+  distinct() |>
+  arrange(wetland_type, project, noxious_status, scientific_name)
+
+for (wt in sort(unique(nox_all$wetland_type))) {
+  cat("\n\n###", wt, "\n\n")
+
+  tbl <- nox_all |>
+    filter(wetland_type == wt) |>
+    select(scientific_name, noxious_status, project) |>
+    rename(`Scientific Name` = scientific_name,
+           `Noxious List`    = noxious_status,
+           `Project`         = project)
+
+  if (nrow(tbl) > 0) {
+    print(knitr::kable(tbl))
+    cat("\n\n")
+  } else {
+    cat("No noxious species recorded.\n\n")
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+## Appendix I: Site Maps
+
+```{r appendix_maps, results='asis'}
+for (id in sort(site_info$TIA_ID)) {
+  jpeg_path <- normalizePath(
+    file.path(here("maps"), paste0("report_map_", id, ".jpg")),
+    mustWork = FALSE
+  )
+  if (file.exists(jpeg_path)) {
+    cat(paste0("![](", jpeg_path, ")\n\n"))
+  } else {
+    cat("*Map not available for TIA ID:", id, "*\n\n")
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+*Report produced on `r format(Sys.Date(), "%B %d, %Y")`*
